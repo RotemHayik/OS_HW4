@@ -95,10 +95,23 @@ static int device_open(struct inode *inode, struct file *file)
 
 static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-    // connect fd to channel
-    ((struct my_file*)file->private_data)->channel_id = (int)arg; // store channel id in private data
+    // save the pointer to my_file struct
+    struct my_file *ctx = file->private_data;
+
+    if (!ctx)
+        return -EINVAL;
+
+    if (cmd != MSG_SLOT_CHANNEL)
+        return -EINVAL;
+
+    if (arg == 0)
+        return -EINVAL;
+
+    // set the channel id
+    ctx->channel_id = (int)arg;
     return 0;
 }
+
 
 static ssize_t device_read(struct file *file, char __user *buffer, size_t length, loff_t *offset)
 {
