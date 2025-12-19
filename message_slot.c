@@ -3,6 +3,8 @@
 #undef MODULE
 #define MODULE   
 
+#define MAX_SLOTS 256
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>      
@@ -13,6 +15,11 @@ MODULE_LICENSE("GPL");
 
 // structs
 
+// there is a need to distinguish between different fds
+struct my_file{
+    struct slot *slot;
+    int channel_id;
+};
 
 struct channel {
     int id;
@@ -30,7 +37,7 @@ struct slot {
 
 // global variables
 
-struct slot slot_array[256]; // array of slots
+static struct slot* slots_arr[MAX_SLOTS]; // initialized array of pointers to slots
 
 //---------------------------------------------------------------
 
@@ -38,15 +45,29 @@ struct slot slot_array[256]; // array of slots
 
 // helper functions
 
-struct slot* create_slot(int minor)
+// find slot by minor number, create if not exists
+struct slot* find_or_create_slot(int minor)
 {
-    
-    struct slot* new_slot = kmalloc(sizeof(struct slot), GFP_KERNEL);
-    if (new_slot != NULL) {
-        new_slot->minor = minor;
+    struct slot* slot_ptr;
+
+    if (minor < 0 || minor >= MAX_SLOTS)
+        return NULL;
+
+    if (slots_arr[minor] != NULL) {
+        slot_ptr = slots_arr[minor];
+    } else {
+        slot_ptr = kmalloc(sizeof(struct slot), GFP_KERNEL);
+        if (!slot_ptr)
+            return NULL;
+
+        slot_ptr->minor = minor;
+        slot_ptr->channels = NULL;
+        slots_arr[minor] = slot_ptr;
     }
-    return new_slot;
+
+    return slot_ptr;
 }
+
 //---------------------------------------------------------------
 
 // device functions
@@ -57,14 +78,25 @@ static int device_open(struct inode *inode, struct file *file)
     // get the opened file's minor number
     int minor = iminor(inode);
     // find or create the slot for this minor number
-    struct slot *s = create_slot(minor);
-    file->private_data = NULL; // initialize private data
+    struct slot *s = find_or_create_slot(minor);
+    if (!s) {
+        return -ENOMEM; // memory allocation failed
+    }
+    struct my_file * ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
+    if (!ctx)
+        return -ENOMEM;
+
+    ctx->slot = s;
+    ctx->channel_id = 0;   // no channel selected yet
+
+    file->private_data = ctx;
     return 0;
 }
 
 static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-    printk(KERN_INFO "IOCTL command received: %u\n", cmd);
+    // connect fd to channel
+    ((struct my_file*)file->private_data)->channel_id = (int)arg; // store channel id in private data
     return 0;
 }
 
