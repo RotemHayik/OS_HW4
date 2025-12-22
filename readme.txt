@@ -8,5 +8,6 @@ sudo insmod message_slot.ko
 // notifies the kernel that its not a regular file, its a device
 // c - tells the kernel its a device
 // the major and minor tells the kernel to which driver to turn
+
 sudo mknod /dev/slot0 c 235 0
 
