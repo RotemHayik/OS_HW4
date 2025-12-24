@@ -10,6 +10,7 @@
 #include <linux/init.h>
 #include <linux/fs.h>      
 #include <linux/uaccess.h>  
+#include <linux/slab.h> // for kmalloc and kfree
 
 #include "message_slot.h"
 
@@ -50,7 +51,8 @@ static struct slot* slots_arr[MAX_SLOTS]; // initialized array of pointers to sl
 // declerations
 struct slot* find_or_create_slot(int minor);
 static int device_open(struct inode *inode, struct file *file);
-static long device_ioctl(struct file *file, int cmd, unsigned int arg);
+static int device_release(struct inode *inode, struct file *file);
+static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 static ssize_t device_write(struct file *file, char __user *buffer, size_t length, loff_t *offset);
 static ssize_t device_read(struct file *file, char __user *buffer, size_t length, loff_t *offset);
 static int __init message_slot_init(void);
@@ -110,7 +112,8 @@ static int device_open(struct inode *inode, struct file *file)
     return SUCCESS;
 }
 
-static long device_ioctl(struct file *file, int cmd, unsigned int arg)
+static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+
 {
     struct slot_file *fd_data = file->private_data;
 
@@ -168,19 +171,19 @@ static ssize_t device_read(struct file *file, char __user *buffer, size_t length
 
     // copy message to user
     if (copy_to_user(buffer, curr->message, curr->len))
-        return -EFAULT;
+        return -EINVAL;
 
     // return number of bytes read
     return curr->len;
 }
-
 
 static ssize_t device_write(struct file *file, char __user *buffer, size_t length, loff_t *offset)
 {
     struct slot_file *fd_data = file->private_data;
     struct slot *slot;
     struct channel *curr;
-    int is_new = 0;
+    char tmp[MAX_MESSAGE_LENGTH];
+    size_t i;
 
     if (!fd_data)
         return -EINVAL;
@@ -191,6 +194,18 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
     if (length == 0 || length > MAX_MESSAGE_LENGTH)
         return -EMSGSIZE;
 
+    // copy message to tmp buffer
+    if (copy_from_user(tmp, buffer, length))
+        return -EFAULT;
+
+    // apply censor logic to the tmp buffer
+    if (fd_data->censor) {
+        for (i = 0; i < length; i++) {
+            if (i % 4 == 3)
+                tmp[i] = '#';
+        }
+    }
+
     slot = fd_data->slot;
 
     // find channel 
@@ -198,42 +213,32 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
     while (curr && curr->id != fd_data->channel_id)
         curr = curr->next;
 
-    // if not found allocate, but don't link yet 
+    // allocate channel if not found
     if (!curr) {
         curr = kmalloc(sizeof(*curr), GFP_KERNEL);
         if (!curr)
             return -ENOMEM;
-        is_new = 1;
-    }
 
-    // copy message 
-    if (copy_from_user(curr->message, buffer, length)) {
-        if (is_new)
-            kfree(curr);
-        return -EFAULT;
-    }
-
-    // censor logic 
-    if (fd_data->censor) {
-        size_t i;
-        for (i = 0; i < length; i++) {
-            if (i % 4 == 3)
-                curr->message[i] = '#';
-        }
-    }
-
-    curr->len = length;
-    curr->id = fd_data->channel_id;
-
-    // link only after success
-    if (is_new) {
         curr->next = slot->channels;
         slot->channels = curr;
     }
 
+    // store message in channel
+    memcpy(curr->message, tmp, length);
+    curr->len = length;
+    curr->id = fd_data->channel_id;
+
     return length;
 }
 
+static int device_release(struct inode *inode, struct file *file)
+{
+    if (file->private_data){
+        kfree(file->private_data);
+    }
+    file->private_data = NULL;
+    return SUCCESS;
+}
 
 //---------------------------------------------------------------
 
@@ -245,6 +250,7 @@ static struct file_operations Fops = {
   .unlocked_ioctl = device_ioctl,
   .read           = device_read,
   .write        = device_write,
+  .release        = device_release,
 };
 
 //---------------------------------------------------------------
@@ -252,34 +258,46 @@ static struct file_operations Fops = {
 // init function
 static int __init message_slot_init(void)
 {
-    int rc = -1;
+    int rc;
 
-    // if someone will reach to the MAJOR_NUM, the calls will be transfered to the FOPS functions
-    rc = register_chrdev( MAJOR_NUM, DEVICE_RANGE_NAME, &Fops );
-
-    // Negative values signify an error
-    if( rc < 0 ) {
-    printk( KERN_ALERT "%s registraion failed for  %d\n",
-                       DEVICE_FILE_NAME, MAJOR_NUM );
-     return rc;
-     }
-    // memory allocation
-
-    // TODO: CHECK OTHER FAILURES
-    
-    // allocation failure handling
-    if (0) {
-        printk(KERN_ERR "Memory allocation failed\n");
-        return -ENOMEM;
+    rc = register_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME, &Fops);
+    if (rc < 0) {
+        printk(KERN_ALERT "%s registration failed for %d\n",
+               DEVICE_FILE_NAME, MAJOR_NUM);
+        return rc;
     }
-    // success
-    return 0;
+
+    return SUCCESS;
 }
+
 
 // exit function
 static void __exit message_slot_exit(void)
 {
-    printk(KERN_INFO "Message Slot Module Unloaded\n");
+    int i;
+
+    for (i = 0; i < MAX_SLOTS; i++) {
+        struct slot *slot = slots_arr[i];
+        struct channel *curr, *next;
+
+        if (!slot)
+            continue;
+
+        // free all channels in this slot 
+        curr = slot->channels;
+        while (curr) {
+            next = curr->next;
+            kfree(curr);
+            curr = next;
+        }
+
+        // free the slot itself 
+        kfree(slot);
+        slots_arr[i] = NULL; // change pointer to NULL
+    }
+    // Unregister the device, should always succeed
+    unregister_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME);
+
 }
 
 //---------------------------------------------------------------
