@@ -10,7 +10,7 @@
 
 /* ioctl MACROS to define 2 commands */
 #define MSG_SLOT_CHANNEL _IOW(MAJOR_NUM, 0, unsigned int)
-#define MSG_SLOT_SET_1CEN _IOW(MAJOR_NUM, 1, unsigned int)
+#define MSG_SLOT_SET_CEN _IOW(MAJOR_NUM, 1, unsigned int)
 
 #define SUCCESS 0
 

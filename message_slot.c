@@ -6,6 +6,8 @@
 #define MAX_SLOTS 256
 #define MAX_MESSAGE_LENGTH 128
 
+#include <linux/kernel.h>
+#include <linux/types.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>      
@@ -24,19 +26,19 @@ MODULE_LICENSE("GPL");
 // a specifiec object for each fd
 struct slot_file{
     struct slot *slot; // a pointer to the slot in the global array
-    int channel_id;
+    unsigned int channel_id;
     int censor; // default mode is 0 = uncensored
 };
 
 struct channel {
-    int id;
+    unsigned int id;
     char message[MAX_MESSAGE_LENGTH];
     size_t len;
     struct channel *next;
 };
 
 struct slot {
-    int minor;
+    unsigned int minor;
     struct channel *channels;
 };
 
@@ -45,18 +47,6 @@ struct slot {
 // global variables
 
 static struct slot* slots_arr[MAX_SLOTS]; // initialized array of pointers to slots
-
-//---------------------------------------------------------------
-
-// declerations
-struct slot* find_or_create_slot(int minor);
-static int device_open(struct inode *inode, struct file *file);
-static int device_release(struct inode *inode, struct file *file);
-static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
-static ssize_t device_write(struct file *file, char __user *buffer, size_t length, loff_t *offset);
-static ssize_t device_read(struct file *file, char __user *buffer, size_t length, loff_t *offset);
-static int __init message_slot_init(void);
-static void __exit message_slot_exit(void);
 
 //---------------------------------------------------------------
 
@@ -129,6 +119,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         break;
 
     case MSG_SLOT_SET_CENSOR:
+        if (arg != 0 && arg != 1)
+            return -EINVAL; // Invalid argument
         // if arg is diff than 0, put 1. else 0.
         fd_data->censor = (arg != 0);
         break;
@@ -154,6 +146,8 @@ static ssize_t device_read(struct file *file, char __user *buffer, size_t length
         return -EINVAL; 
 
     slot = fd_data->slot;
+    if (!slot)
+        return -EINVAL;
     curr = slot->channels; // head of the channel list
 
     // search for the channel
@@ -196,7 +190,7 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
 
     // copy message to tmp buffer
     if (copy_from_user(tmp, buffer, length))
-        return -EFAULT;
+        return -EINVAL;
 
     // apply censor logic to the tmp buffer
     if (fd_data->censor) {
@@ -207,6 +201,8 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
     }
 
     slot = fd_data->slot;
+    if (!slot)
+        return -EINVAL;
 
     // find channel 
     curr = slot->channels;
