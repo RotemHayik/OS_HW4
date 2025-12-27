@@ -1,1 +1,0 @@
-cmd_/home/student/OScode/OS_HW4/Module.symvers := sed 's/ko$$/o/' /home/student/OScode/OS_HW4/modules.order | scripts/mod/modpost -m    -o /home/student/OScode/OS_HW4/Module.symvers -e -i Module.symvers   -T -

@@ -1,2 +1,0 @@
-/home/student/OScode/OS_HW4/message_slot.o
-
