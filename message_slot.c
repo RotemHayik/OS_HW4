@@ -236,9 +236,9 @@ static int device_release(struct inode *inode, struct file *file)
 {
     struct slot_file *fd_data = (struct slot_file *)file->private_data;
     if (fd_data != NULL) {
-        kfree(fd_data->private_data);
+        kfree(fd_data);
     }
-    fd_data->private_data = NULL;
+    fd_data = NULL;
     return SUCCESS;
 }
 
