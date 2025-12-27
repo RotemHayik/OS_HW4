@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
 
     // read
   
-    if ( bytes = (read(fd, buffer, BUF_SIZE) < 0)) {
+    if ( (bytes = read(fd, buffer, BUF_SIZE)) < 0) {
         perror("read failed");
         close(fd);
         exit(1);
