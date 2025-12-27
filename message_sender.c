@@ -11,7 +11,6 @@ int main(int argc, char *argv[])
     int fd;
     unsigned int channel_id;
     unsigned int censor_mode;
-    ssize_t bytes;
     size_t len;
 
     // check the number of arguments
