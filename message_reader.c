@@ -13,7 +13,6 @@ int main(int argc, char *argv[])
     int fd;
     unsigned int channel_id;
     char buffer[BUF_SIZE];
-    ssize_t bytes;
 
     // check the number of arguments
     if (argc != 3) {
@@ -40,7 +39,7 @@ int main(int argc, char *argv[])
 
     // read
   
-    if ( bytes = read(fd, buffer, BUF_SIZE) < 0) {
+    if (read(fd, buffer, BUF_SIZE) < 0) {
         perror("read failed");
         close(fd);
         exit(1);
