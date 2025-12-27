@@ -1,13 +1,12 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <errno.h>
+#include <stdio.h> // perror and fprintf
+#include <stdlib.h> // exit and atoi
+#include <fcntl.h> // open
+#include <unistd.h> // close and read
+#include <sys/ioctl.h> // ioctl
 
 #include "message_slot.h"
 
-#define BUFFER_SIZE 128   
+#define BUF_SIZE 128   
 
 int main(int argc, char *argv[])
 {
@@ -18,7 +17,7 @@ int main(int argc, char *argv[])
 
     // check the number of arguments
     if (argc != 3) {
-        fprintf(stderr, "not enough arguments\n");
+        fprintf(stderr, "this program accepts only 2 arguments\n");
         exit(1);
     }
 
@@ -28,7 +27,7 @@ int main(int argc, char *argv[])
     // open
     fd = open(argv[1], O_RDONLY);
     if (fd < 0) {
-        perror("open failed");
+        perror("open device file failed");
         exit(1);
     }
 
@@ -40,8 +39,8 @@ int main(int argc, char *argv[])
     }
 
     // read
-    bytes = read(fd, buffer, BUF_SIZE);
-    if (bytes < 0) {
+  
+    if ( bytes = read(fd, buffer, BUF_SIZE) < 0) {
         perror("read failed");
         close(fd);
         exit(1);
@@ -58,6 +57,7 @@ int main(int argc, char *argv[])
         perror("write failed");
         exit(1);
     }
+    else
 
-    return 0;
+   return 0;
 }

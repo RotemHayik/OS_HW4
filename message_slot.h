@@ -1,7 +1,7 @@
 #ifndef MESSAGE_SLOT_H
 #define MESSAGE_SLOT_H
 
-#include <linux/ioctl.h>
+#include <linux/ioctl.h> // for ioctl macros
 
 // both kernel and user space need to agree on the major number
 #define MAJOR_NUM 235

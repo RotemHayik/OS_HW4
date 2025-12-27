@@ -7,12 +7,12 @@
 #define MAX_MESSAGE_LENGTH 128
 
 #include <linux/kernel.h>
-#include <linux/types.h>
-#include <linux/module.h>
-#include <linux/init.h>
+#include <linux/module.h>  
 #include <linux/fs.h>      
 #include <linux/uaccess.h>  
-#include <linux/slab.h> // for kmalloc and kfree
+#include <linux/slab.h> 
+#include <linux/string.h> 
+
 
 #include "message_slot.h"
 
@@ -44,9 +44,9 @@ struct slot {
 
 //---------------------------------------------------------------
 
-// global variables
+//  variables
 
-static struct slot* slots_arr[MAX_SLOTS]; // initialized array of pointers to slots
+static struct slot* slots_arr[MAX_SLOTS]; // initialized array of pointers to slots describing all possible minors
 
 //---------------------------------------------------------------
 
@@ -87,42 +87,42 @@ static int device_open(struct inode *inode, struct file *file)
     int minor = iminor(inode);
     // find or create the slot for this minor number
     struct slot *s = find_or_create_slot(minor);
+    struct slot_file *fd_data;
     if (!s) {
         return -ENOMEM; // memory allocation failed
     }
-    struct slot_file *fd_data = kmalloc(sizeof(*fd_data), GFP_KERNEL);
+    fd_data = kmalloc(sizeof(*fd_data), GFP_KERNEL);
     if (!fd_data)
         return -ENOMEM;
 
     fd_data->slot = s;
     fd_data->channel_id = 0;   // no channel selected yet
     fd_data->censor = 0;          // censor off by default
-
     file->private_data = fd_data;
+
     return SUCCESS;
 }
 
-static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-
+static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsigned long ioctl_param)
 {
-    struct slot_file *fd_data = file->private_data;
+    struct slot_file *fd_data = (struct slot_file *)file->private_data;
 
     if (!fd_data)
         return -EINVAL; // Invalid argument
 
-    switch (cmd) {
+    switch (ioctl_command_id) {
 
     case MSG_SLOT_CHANNEL:
-        if (arg == 0)
+        if (ioctl_param == 0)
             return -EINVAL; // Invalid argument
-        fd_data->channel_id = (int)arg;
+        fd_data->channel_id = (int)ioctl_param;
         break;
 
-    case MSG_SLOT_SET_CENSOR:
-        if (arg != 0 && arg != 1)
+    case MSG_SLOT_SET_CEN:
+        if (ioctl_param != 0 && ioctl_param != 1)
             return -EINVAL; // Invalid argument
         // if arg is diff than 0, put 1. else 0.
-        fd_data->censor = (arg != 0);
+        fd_data->censor = (unsigned int)ioctl_param;
         break;
 
     // there are only two cmds
@@ -136,27 +136,30 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 static ssize_t device_read(struct file *file, char __user *buffer, size_t length, loff_t *offset)
 {
-    struct slot_file *fd_data = file->private_data;
+    struct slot_file *fd_data = (struct slot_file *)file->private_data;
     struct slot *slot;
     struct channel *curr;
 
     if(!fd_data)
         return -EINVAL;
+
     if(fd_data->channel_id == 0)
         return -EINVAL; 
 
     slot = fd_data->slot;
+
     if (!slot)
         return -EINVAL;
+
     curr = slot->channels; // head of the channel list
 
     // search for the channel
-      while (curr && curr->id != fd_data->channel_id) {
+      while (curr != NULL && curr->id != fd_data->channel_id) {
         curr = curr->next;
     }
 
-    // if the channel does not exist (there cant be a channel without a message)
-    if (!curr)
+    // if the channel does not exist or has no message
+    if (curr == NULL || curr->len <= 0)
         return -EWOULDBLOCK;
 
     // buffer too small
@@ -164,16 +167,18 @@ static ssize_t device_read(struct file *file, char __user *buffer, size_t length
         return -ENOSPC;
 
     // copy message to user
-    if (copy_to_user(buffer, curr->message, curr->len))
+    if (copy_to_user(buffer, curr->message, curr->len) != 0)
         return -EINVAL;
 
     // return number of bytes read
     return curr->len;
 }
 
-static ssize_t device_write(struct file *file, char __user *buffer, size_t length, loff_t *offset)
+
+
+static ssize_t device_write(struct file* file, const char __user* buffer, size_t length, loff_t* offset)
 {
-    struct slot_file *fd_data = file->private_data;
+    struct slot_file *fd_data = (struct slot_file *)file->private_data;
     struct slot *slot;
     struct channel *curr;
     char tmp[MAX_MESSAGE_LENGTH];
@@ -185,15 +190,15 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
     if (fd_data->channel_id == 0)
         return -EINVAL;
 
-    if (length == 0 || length > MAX_MESSAGE_LENGTH)
+    if (length < 1 || length > MAX_MESSAGE_LENGTH)
         return -EMSGSIZE;
 
     // copy message to tmp buffer
-    if (copy_from_user(tmp, buffer, length))
+    if (copy_from_user(tmp, buffer, length) != 0)
         return -EINVAL;
 
     // apply censor logic to the tmp buffer
-    if (fd_data->censor) {
+    if (fd_data->censor == 1) {
         for (i = 0; i < length; i++) {
             if (i % 4 == 3)
                 tmp[i] = '#';
@@ -206,11 +211,11 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
 
     // find channel 
     curr = slot->channels;
-    while (curr && curr->id != fd_data->channel_id)
+    while (curr != NULL && curr->id != fd_data->channel_id)
         curr = curr->next;
 
     // allocate channel if not found
-    if (!curr) {
+    if (curr == NULL) {
         curr = kmalloc(sizeof(*curr), GFP_KERNEL);
         if (!curr)
             return -ENOMEM;
@@ -229,10 +234,11 @@ static ssize_t device_write(struct file *file, char __user *buffer, size_t lengt
 
 static int device_release(struct inode *inode, struct file *file)
 {
-    if (file->private_data){
-        kfree(file->private_data);
+    struct slot_file *fd_data = (struct slot_file *)file->private_data;
+    if (fd_data != NULL) {
+        kfree(fd_data->private_data);
     }
-    file->private_data = NULL;
+    fd_data->private_data = NULL;
     return SUCCESS;
 }
 
@@ -240,7 +246,7 @@ static int device_release(struct inode *inode, struct file *file)
 
 // creating the object Fops of file operations struct
 // assigning the functions to the struct variables
-static struct file_operations Fops = {
+struct file_operations Fops = {
   .owner	  = THIS_MODULE, 
   .open           = device_open,
   .unlocked_ioctl = device_ioctl,
@@ -254,16 +260,16 @@ static struct file_operations Fops = {
 // init function
 static int __init message_slot_init(void)
 {
-    int rc;
+    int rc = -1;
 
     rc = register_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME, &Fops);
     if (rc < 0) {
         printk(KERN_ALERT "%s registration failed for %d\n",
-               DEVICE_FILE_NAME, MAJOR_NUM);
+               DEVICE_RANGE_NAME, MAJOR_NUM);
         return rc;
     }
 
-    return SUCCESS;
+    return 0;
 }
 
 
@@ -271,16 +277,17 @@ static int __init message_slot_init(void)
 static void __exit message_slot_exit(void)
 {
     int i;
+    struct slot *slot_in_arr;
+    struct channel *curr, *next;
 
     for (i = 0; i < MAX_SLOTS; i++) {
-        struct slot *slot = slots_arr[i];
-        struct channel *curr, *next;
+        slot_in_arr = slots_arr[i];
 
-        if (!slot)
+        if (!slot_in_arr)
             continue;
 
         // free all channels in this slot 
-        curr = slot->channels;
+        curr = slot_in_arr->channels;
         while (curr) {
             next = curr->next;
             kfree(curr);
@@ -288,7 +295,7 @@ static void __exit message_slot_exit(void)
         }
 
         // free the slot itself 
-        kfree(slot);
+        kfree(slot_in_arr);
         slots_arr[i] = NULL; // change pointer to NULL
     }
     // Unregister the device, should always succeed
